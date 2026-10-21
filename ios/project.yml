@@ -43,7 +43,7 @@ targets:
         UIRequiresFullScreen: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSBluetoothAlwaysUsageDescription: ESP32 Agent talks to its USB board over Bluetooth to see the screen and move the pointer.
-        UIBackgroundModes: [bluetooth-central]
+        UIBackgroundModes: [bluetooth-central, screen-capture]
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         CFBundleDocumentTypes:  # shared run archives (Settings › Privacy › Export) open as imported runs

@@ -123,7 +123,33 @@ struct SeePage: View {
     }
     private var failure: String? { if case .failed(let why) = app.join { return why } else { return nil } }
 
+    /// A board without video (hid_ble) on iOS 27: the app captures the screen itself, no Wi-Fi or AirPlay.
+    private var capturesOnPhone: Bool { board.status?.net == "none" && VideoFeed.canCapture }
+
     var body: some View {
+        if capturesOnPhone { captureBody } else { mirrorBody }
+    }
+
+    private var captureBody: some View {
+        VStack(spacing: Space.xl) {
+            PageHeader(mood: streaming ? .success : .idle, title: "Let Me See the Screen",
+                       message: "Share the whole screen with the app. Nothing leaves the phone except what the model is sent.")
+            Panel {
+                CheckRow(title: "Share the entire screen", done: streaming, active: !streaming,
+                         detail: app.feed.captureNote.isEmpty ? nil : LocalizedStringKey(app.feed.captureNote))
+            }
+            if !streaming {
+                Button("Start Screen Sharing") { app.feed.startCapture() }
+                    .buttonStyle(.borderedProminent)
+                Label("Choose “Entire Screen” in the system sheet. Keep the screen unlocked.", systemImage: "rectangle.dashed.badge.record")
+                    .font(.footnote).foregroundStyle(.secondary)
+            } else {
+                Button("Stop Sharing", role: .destructive) { app.feed.stopCapture() }.font(.footnote)
+            }
+        }
+    }
+
+    private var mirrorBody: some View {
         VStack(spacing: Space.xl) {
             PageHeader(mood: streaming ? .success : (app.join.busy || joined) ? .listening : failure != nil ? .failure : .idle,
                        title: "Let Me See the Screen",

@@ -292,7 +292,8 @@ import Foundation
 
     func type(_ text: String) async throws { try await device.send("type \(text)") }
     func key(_ combo: String) async throws { try await device.send("key \(combo)") }
-    /// The board's consumer-control Home key ("AC Home"), which iOS treats like a keyboard's home key. Boards
+    /// The board's `homescreen`: hid_ble clicks the middle button (mapped to Home in AssistiveTouch), the USB
+    /// board sends the consumer-control Home key ("AC Home"), which iOS treats like a keyboard's home key. Boards
     /// without it (older firmware) answer an error: then Cmd+H and the flick up from the home bar (a flick, not
     /// a rest: resting opens the app switcher).
     func goHome() async throws {

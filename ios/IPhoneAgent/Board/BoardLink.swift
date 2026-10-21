@@ -28,6 +28,8 @@ import Foundation
     var onStatus: ((BoardStatus) -> Void)?
     var onLinkUp: (() -> Void)?
     var onLinkDown: (() -> Void)?
+    /// The phone captures its own screen (ScreenCaptureKit): report the screen as streaming, whatever the board says.
+    var screenOnPhone: () -> Bool = { false }
     private var lastNotify = 0.0  // last notification of any kind, to tell a supervision timeout from a peer drop
     private var statusRevision = 0
     private var readySince = 0.0
@@ -290,6 +292,15 @@ import Foundation
         onLinkUp?()
     }
 
+    /// Local screen capture started or stopped: update `ap` now instead of at the next status notify.
+    func screenChanged(_ onPhone: Bool) {
+        guard var s = status else { return }
+        s.ap = onPhone ? "streaming" : "idle"
+        statusRevision += 1
+        status = s
+        onStatus?(s)
+    }
+
     func mockStatus(_ s: BoardStatus) {
         status = s
         onStatus?(s)
@@ -499,7 +510,8 @@ extension BoardLink: CBPeripheralDelegate {
             case BoardUUID.reply: commands.handleReply(String(decoding: v, as: UTF8.self))
             case BoardUUID.status:
                 if let s = BoardStatus.decode(v) {
-                    let merged = status?.merged(with: s) ?? s
+                    var merged = status?.merged(with: s) ?? s
+                    if screenOnPhone() { merged.ap = "streaming" }
                     statusRevision += 1
                     status = merged
                     onStatus?(merged)

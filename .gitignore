@@ -12,6 +12,7 @@ hardware/hid_bridge/secrets.h
 # Build output
 hardware/build/
 hardware/hid_bridge/build/
+hardware/hid_ble/build/
 
 # Editors and OS
 .DS_Store

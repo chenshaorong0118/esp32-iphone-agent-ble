@@ -107,6 +107,8 @@ import UIKit
             self?.modelResponseSeconds = nil
         }
         board.onVideo = { [weak self] in self?.feed.receive($0) }
+        board.screenOnPhone = { [weak self] in self?.feed.localCapture ?? false }
+        feed.onCaptureChange = { [weak self] on in self?.board.screenChanged(on) }
         board.onStatus = { [weak self] s in
             self?.statusRefreshError = nil
             self?.feed.mirroring = s.ap == "streaming"

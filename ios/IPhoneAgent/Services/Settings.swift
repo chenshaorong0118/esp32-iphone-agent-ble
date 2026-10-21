@@ -59,7 +59,7 @@ import UIKit
         plannerModel = defaults.string(forKey: "plannerModel") ?? ""
         actorModel = defaults.string(forKey: "actorModel") ?? ""
         tokenParam = defaults.string(forKey: "tokenParam") ?? "auto"
-        extraBody = defaults.string(forKey: "extraBody") ?? "{}"
+        extraBody = defaults.string(forKey: "extraBody") ?? preset("IAPresetExtraBody") ?? "{}"
         apiKey = Self.stored(Keychain.get("llm-api-key")) ?? preset("IAPresetKey") ?? ""
         agentName = defaults.string(forKey: Self.agentNameKey) ?? Self.defaultAgentName
         onboarded = defaults.bool(forKey: "onboarded")

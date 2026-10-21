@@ -45,7 +45,8 @@ extension Pointer: Gestures {}
     private(set) var lastActed = 0.0
     /// Awaited before every look and every gesture (the app holds the run while its own UI is in front).
     var gate: (() async throws -> Void)?
-    static let maxTokens = ["planner": 1500, "actor": 1000]
+    // Thinking models (Gemini 3.x) spend hidden reasoning tokens from this budget: 1000 truncated replies.
+    static let maxTokens = ["planner": 4096, "actor": 4096]
     private var job: Task<Void, Never>?
     var onFinish: (() -> Void)?
     /// Paused for the board to come back (a line for the UI), or nil when going on.

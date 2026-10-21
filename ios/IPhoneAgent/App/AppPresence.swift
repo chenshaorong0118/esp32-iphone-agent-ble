@@ -7,10 +7,11 @@ extension AppModel {
 
     private var inBackground: Bool { UIApplication.shared.applicationState == .background }
 
-    /// Leaves our own app without touching the screen: the board's Cmd+H, then its home flick as a fallback.
+    /// Leaves our own app without touching the screen: the board's Home (a mouse button mapped to Home in
+    /// AssistiveTouch on hid_ble boards, else AC Home / home flick), then Cmd+H as a fallback.
     /// The model is never asked to do this.
     func leaveApp() async -> Bool {
-        for method in ["cmd+h", "home swipe"] {
+        for method in ["home", "cmd+h"] {
             if inBackground { return true }
             do {
                 switch method {

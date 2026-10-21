@@ -57,6 +57,8 @@
 	<string>$(IA_PRESET_KEY)</string>
 	<key>IAPresetModel</key>
 	<string>$(IA_PRESET_MODEL)</string>
+	<key>IAPresetExtraBody</key>
+	<string>$(IA_PRESET_EXTRA_BODY)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
@@ -68,6 +70,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
+		<string>screen-capture</string>
 	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>

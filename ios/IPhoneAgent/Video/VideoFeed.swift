@@ -1,4 +1,7 @@
+import CoreImage
 import Foundation
+import ImageIO
+import ScreenCaptureKit
 import UIKit
 
 /// What the agent and the pointer need from the screen (VideoFeed, or a fake in tests). Port of screen.py.
@@ -52,7 +55,8 @@ extension ScreenSource {
     }
 }
 
-/// The phone's screen, mirrored over AirPlay to the board and forwarded over BLE, as JPEG frames.
+/// The phone's screen as JPEG frames: mirrored over AirPlay to the board and forwarded over BLE, or (iOS 27, a
+/// board without video such as hid_ble) captured on the phone itself with ScreenCaptureKit (`localCapture`).
 @MainActor final class VideoFeed: ObservableObject, ScreenSource {
     @Published private(set) var frame: Data?
     @Published private(set) var size = CGSize.zero
@@ -66,6 +70,12 @@ extension ScreenSource {
     var mirroring = false  // board status says ap == streaming
     var metrics: Metrics?
     weak var device: HIDDevice?
+    /// The screen comes from ScreenCaptureKit on this phone, not from the board.
+    @Published private(set) var localCapture = false
+    @Published private(set) var captureNote = ""
+    private var capture: AnyObject?  // ScreenCapture (iOS 27)
+    private var confirmedAt = 0.0     // last "screen unchanged" from ScreenCaptureKit
+    var onCaptureChange: ((Bool) -> Void)?
 
     private var assembler = VideoAssembler()
     private let decoder = H264Decoder()
@@ -82,7 +92,7 @@ extension ScreenSource {
         }
     }
 
-    var live: Bool { mirroring && frame != nil && (device?.connected ?? false) }
+    var live: Bool { (localCapture || mirroring) && frame != nil && (device?.connected ?? false) }
 
     /// Frame width / height (portrait iPhone as a fallback).
     var aspect: Double { size.width > 0 && size.height > 0 ? size.width / size.height : 9 / 19.5 }
@@ -140,6 +150,12 @@ extension ScreenSource {
     /// once with a longer timeout. Returns where the frame came from, for the log.
     @discardableResult
     func currentFrame(maxAge: Double = 1, wait: Double = 3) async throws -> String {
+        if localCapture {
+            if frame != nil && now() - max(updated, confirmedAt) < maxAge { return "capture" }
+            if await fresh(since: now() - maxAge, timeout: wait) != nil { return "capture (waited)" }
+            if frame != nil { return "capture (unchanged)" }  // ScreenCaptureKit only sends frames on change
+            throw DeviceError(message: String(localized: "Screen sharing is off. Start it on the See step."))
+        }
         if streamOn && mirroring {
             if frame != nil && now() - updated < maxAge { return "live" }
             if await fresh(since: now() - maxAge, timeout: wait) != nil { return "live (waited)" }
@@ -156,6 +172,7 @@ extension ScreenSource {
     /// Ask the board for the current GOP and wait until it is decoded. Returns the latency in ms.
     @discardableResult
     func snap(timeout: Double? = nil) async throws -> Double {
+        if localCapture { return 0 }
         guard let device else { throw DeviceError(message: "board not connected") }
         let started = now()
         if let channel = device as? CommandChannel {
@@ -171,6 +188,7 @@ extension ScreenSource {
     }
 
     func stream(_ on: Bool) async throws {
+        if localCapture { streamOn = on; return }  // the phone captures itself; the board has no video
         try await device?.send("stream \(on ? "on" : "off")")
         streamOn = on
     }
@@ -180,6 +198,11 @@ extension ScreenSource {
     /// the screen did not change, but a broken stream (waiting for an IDR) needs a snap. Snap: give the UI a moment,
     /// snap, and snap once more if the GOP still ends before the action.
     func afterAction(since: Double) async {
+        if localCapture {
+            await settled()
+            if await newer(than: since, timeout: 1.5) { return }
+            return DebugLog.write("frame: none after the action; screen unchanged")
+        }
         do {
             if FrameMode.current == .snap {
                 try await Task.sleep(nanoseconds: 700_000_000)
@@ -212,5 +235,144 @@ extension ScreenSource {
     }
 
     /// The link dropped: the board forgets `stream on`.
-    func linkLost() { streamOn = false }
+    func linkLost() { if !localCapture { streamOn = false } }
+
+    // MARK: - ScreenCaptureKit (iOS 27)
+
+    static var canCapture: Bool { if #available(iOS 27.0, *) { return true } else { return false } }
+
+    /// Shows the system picker; the user chooses the entire screen. Frames then flow until sharing stops.
+    func startCapture() {
+        guard #available(iOS 27.0, *) else { captureNote = String(localized: "Screen sharing needs iOS 27."); return }
+        let c = (capture as? ScreenCapture) ?? ScreenCapture()
+        capture = c
+        c.onFrame = { [weak self] jpeg, w, h, at in self?.receiveCaptured(jpeg, width: w, height: h, capturedAt: at) }
+        c.onIdle = { [weak self] at in self?.confirmedAt = at }
+        c.onState = { [weak self] running, note in
+            guard let self else { return }
+            localCapture = running
+            captureNote = note
+            if !running { frame = nil }
+            onCaptureChange?(running)
+            DebugLog.write("capture: \(running ? "running" : "stopped") \(note)")
+        }
+        c.present()
+    }
+
+    func stopCapture() {
+        if #available(iOS 27.0, *) { (capture as? ScreenCapture)?.stop() }
+    }
+
+    private func receiveCaptured(_ jpeg: Data, width: Int, height: Int, capturedAt at: Double) {
+        frame = jpeg
+        updated = now()
+        capturedAt = at
+        broken = false
+        if size.width != CGFloat(width) || size.height != CGFloat(height) { size = CGSize(width: width, height: height) }
+        metrics?.frameDecoded(ms: (updated - at) * 1000)
+    }
+}
+
+/// The whole screen of this phone through ScreenCaptureKit. Frames arrive only when the screen changes (`.complete`);
+/// an unchanged screen reports `.idle`. Changed frames are encoded at most every `minGap` s, always ending on the
+/// latest one, scaled so the long side is `longSide` px. Callbacks run on the main queue.
+@available(iOS 27.0, *)
+final class ScreenCapture: NSObject, SCContentSharingPickerObserver, SCStreamOutput, SCStreamDelegate {
+    var onFrame: ((Data, Int, Int, Double) -> Void)?
+    var onIdle: ((Double) -> Void)?
+    var onState: ((Bool, String) -> Void)?
+    private let longSide: CGFloat = 1280
+    private let minGap = 0.15
+    private let queue = DispatchQueue(label: "screen.capture")
+    private let context = CIContext()
+    private var stream: SCStream?
+    private var pending: (CVPixelBuffer, Double)?  // queue only
+    private var lastEncode = 0.0
+    private var scheduled = false
+
+    func present() {
+        let picker = SCContentSharingPicker.shared
+        picker.add(self)
+        picker.isActive = true
+        picker.present(using: .display)
+    }
+
+    func stop() {
+        stream?.stopCapture { _ in }
+        stream = nil
+        SCContentSharingPicker.shared.isActive = false
+        state(false, String(localized: "Screen sharing stopped."))
+    }
+
+    private func state(_ running: Bool, _ note: String) { DispatchQueue.main.async { self.onState?(running, note) } }
+
+    func contentSharingPicker(_ picker: SCContentSharingPicker, didUpdateWith filter: SCContentFilter, for stream: SCStream?) {
+        let config = SCStreamConfiguration()
+        config.capturesAudio = false
+        let scale = CGFloat(filter.pointPixelScale)
+        config.width = max(1, Int(filter.contentRect.width * scale))
+        config.height = max(1, Int(filter.contentRect.height * scale))
+        self.stream?.stopCapture { _ in }
+        let next = SCStream(filter: filter, configuration: config, delegate: self)
+        do {
+            try next.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+        } catch {
+            return state(false, error.localizedDescription)
+        }
+        self.stream = next
+        next.startCapture { [weak self] error in
+            if let error { self?.state(false, error.localizedDescription) } else { self?.state(true, "") }
+        }
+    }
+
+    func contentSharingPicker(_ picker: SCContentSharingPicker, didCancelFor stream: SCStream?) {
+        if self.stream == nil { state(false, String(localized: "Screen sharing was cancelled.")) }
+    }
+
+    func contentSharingPickerStartDidFailWithError(_ error: Error) { state(false, error.localizedDescription) }
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        if stream === self.stream { self.stream = nil }
+        state(false, error.localizedDescription)
+    }
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer buffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .screen, stream === self.stream, CMSampleBufferIsValid(buffer),
+              let info = CMSampleBufferGetSampleAttachmentsArray(buffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+              let raw = info.first?[.status] as? Int, let status = SCFrameStatus(rawValue: raw) else { return }
+        let t = now()
+        switch status {
+        case .complete:
+            guard let pixels = CMSampleBufferGetImageBuffer(buffer) else { return }
+            pending = (pixels, t)
+            flush()
+        case .idle:
+            if pending == nil { DispatchQueue.main.async { self.onIdle?(t) } }
+        default:
+            break
+        }
+    }
+
+    /// Encode the latest changed frame now, or once `minGap` has passed since the last one (on `queue`).
+    private func flush() {
+        guard let (pixels, at) = pending else { return }
+        let wait = lastEncode + minGap - now()
+        if wait > 0 {
+            if !scheduled {
+                scheduled = true
+                queue.asyncAfter(deadline: .now() + wait) { [weak self] in self?.scheduled = false; self?.flush() }
+            }
+            return
+        }
+        pending = nil
+        lastEncode = now()
+        var image = CIImage(cvPixelBuffer: pixels)
+        let factor = min(1, longSide / max(image.extent.width, image.extent.height))
+        if factor < 1 { image = image.transformed(by: CGAffineTransform(scaleX: factor, y: factor)) }
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
+        let key = CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String)
+        guard let jpeg = context.jpegRepresentation(of: image, colorSpace: space, options: [key: 0.6]) else { return }
+        let w = Int(image.extent.width.rounded()), h = Int(image.extent.height.rounded())
+        DispatchQueue.main.async { self.onFrame?(jpeg, w, h, at) }
+    }
 }
