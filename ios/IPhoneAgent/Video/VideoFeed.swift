@@ -1,7 +1,9 @@
 import CoreImage
 import Foundation
 import ImageIO
+#if canImport(ScreenCaptureKit)
 import ScreenCaptureKit
+#endif
 import UIKit
 
 /// What the agent and the pointer need from the screen (VideoFeed, or a fake in tests). Port of screen.py.
@@ -239,10 +241,16 @@ extension ScreenSource {
 
     // MARK: - ScreenCaptureKit (iOS 27)
 
-    static var canCapture: Bool { if #available(iOS 27.0, *) { return true } else { return false } }
+    static var canCapture: Bool {
+        #if canImport(ScreenCaptureKit)
+        if #available(iOS 27.0, *) { return true }
+        #endif
+        return false
+    }
 
     /// Shows the system picker; the user chooses the entire screen. Frames then flow until sharing stops.
     func startCapture() {
+        #if canImport(ScreenCaptureKit)
         guard #available(iOS 27.0, *) else { captureNote = String(localized: "Screen sharing needs iOS 27."); return }
         let c = (capture as? ScreenCapture) ?? ScreenCapture()
         capture = c
@@ -257,10 +265,15 @@ extension ScreenSource {
             DebugLog.write("capture: \(running ? "running" : "stopped") \(note)")
         }
         c.present()
+        #else
+        captureNote = String(localized: "Screen sharing needs iOS 27.")
+        #endif
     }
 
     func stopCapture() {
+        #if canImport(ScreenCaptureKit)
         if #available(iOS 27.0, *) { (capture as? ScreenCapture)?.stop() }
+        #endif
     }
 
     private func receiveCaptured(_ jpeg: Data, width: Int, height: Int, capturedAt at: Double) {
@@ -273,6 +286,7 @@ extension ScreenSource {
     }
 }
 
+#if canImport(ScreenCaptureKit)
 /// The whole screen of this phone through ScreenCaptureKit. Frames arrive only when the screen changes (`.complete`);
 /// an unchanged screen reports `.idle`. Changed frames are encoded at most every `minGap` s, always ending on the
 /// latest one, scaled so the long side is `longSide` px. Callbacks run on the main queue.
@@ -376,3 +390,4 @@ final class ScreenCapture: NSObject, SCContentSharingPickerObserver, SCStreamOut
         DispatchQueue.main.async { self.onFrame?(jpeg, w, h, at) }
     }
 }
+#endif

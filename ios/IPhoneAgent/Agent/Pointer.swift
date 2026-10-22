@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// Touch-like gestures on the phone, built from relative mouse moves. Port of phone.py.
 ///
@@ -290,7 +291,20 @@ import Foundation
         try await device.send("scroll \(lines) 0")
     }
 
-    func type(_ text: String) async throws { try await device.send("type \(text)") }
+    /// Text goes in by paste: the app puts it on the pasteboard and the board presses Cmd+V. That works in any
+    /// language and with any keyboard (a third-party or Chinese input method mangles typed ASCII: pinyin composes
+    /// it, some drop the spaces). It replaces the clipboard. If the pasteboard cannot be written, the board types
+    /// the ASCII characters itself.
+    func type(_ text: String) async throws {
+        let before = UIPasteboard.general.changeCount
+        UIPasteboard.general.string = text
+        if UIPasteboard.general.changeCount != before {
+            try await key("cmd+v")
+            return
+        }
+        DebugLog.write("type: pasteboard not written; typing ASCII on the board")
+        try await device.send("type \(text)")
+    }
     func key(_ combo: String) async throws { try await device.send("key \(combo)") }
     /// The board's `homescreen`: hid_ble clicks the middle button (mapped to Home in AssistiveTouch), the USB
     /// board sends the consumer-control Home key ("AC Home"), which iOS treats like a keyboard's home key. Boards
