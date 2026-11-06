@@ -42,6 +42,9 @@ iPhone 17 Pro, iOS 27, USB, pure mode:
 X/Y in a report that changes a button is ignored, so a tap is a move, a 60 ms wait, a press and a release. Done that
 way, ten taps over two loops all landed within 0.001 of the target (screen fractions). Tested inside Safari only.
 
+The relative mouse is not needed: with `pure 2` (absolute mouse, keyboard, consumer control) the taps land the same.
+A wheel event arrives at the right position, but with deltaY 0, so scrolling is unconfirmed.
+
 ## Reading the log
 
 `events.jsonl` holds one line per event: `pointerType` says whether iOS treats the input as a finger, a pen or a mouse.

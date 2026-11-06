@@ -47,6 +47,7 @@ pad.addEventListener('touchstart', e => {
   e.preventDefault();
   for (const t of e.changedTouches) record('touchstart', t.touchType || 'touch', t.clientX, t.clientY);
 }, { passive: false });
+pad.addEventListener('wheel', e => { e.preventDefault(); record('wheel', String(Math.round(e.deltaY)), e.clientX, e.clientY); }, { passive: false });
 document.addEventListener('contextmenu', e => e.preventDefault());
 setInterval(() => send({ kind: 'alive', visible: document.visibilityState, t: Date.now(), w: innerWidth, h: innerHeight }), 5000);
 send({ kind: 'loaded', ua: navigator.userAgent, t: Date.now(), w: innerWidth, h: innerHeight });

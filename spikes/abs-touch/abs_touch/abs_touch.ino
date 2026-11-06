@@ -6,7 +6,7 @@
 //
 // Serial (USB CDC, only useful on the Mac):  status | v <1-4> (restart into a variant, idle) | arm [passes]
 //   arm [passes] [first variant]: `arm 1 4` runs only the absolute mouse.
-//   pure 1|0 (restart without / with the relative mouse: the mouse comes first in the report map, and a host may
+//   pure 0|1|2 (restart with the full set / the tested collection alone / all but the relative mouse: the mouse comes first in the report map, and a host may
 //   then treat the whole device as a mouse and ignore the digitizer; pure mode has no control, so run it after a
 //   normal pass has shown that USB works)
 //
@@ -21,6 +21,8 @@
 #include "USB.h"
 #include "USBHID.h"
 #include "USBHIDMouse.h"
+#include "USBHIDKeyboard.h"
+#include "USBHIDConsumerControl.h"
 #include "tusb.h"
 
 const uint8_t REPORT_ID = 10;          // free: USBHID.h takes 1-6
@@ -92,6 +94,7 @@ const uint8_t DESC_ABS_MOUSE[] = {
   0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x03, 0x81, 0x02,
   0x95, 0x05, 0x81, 0x03,              //     padding
   XY_ABS(0xFF, 0x7F),
+  0x09, 0x38, 0x15, 0x81, 0x25, 0x7F, 0x35, 0x00, 0x45, 0x00, 0x75, 0x08, 0x95, 0x01, 0x81, 0x06,  // Wheel, relative
   0xC0, 0xC0,
 };
 
@@ -125,6 +128,7 @@ class Digitizer : public USBHIDDevice {
 Digitizer digitizer;
 
 bool hostUp() { return tud_mounted(); }
+uint16_t scale(float f) { return (uint16_t)(f * FULL); }
 
 // One absolute report. Layouts differ only in variant 2, which adds a contact id and a contact count.
 bool report(uint8_t flags, uint16_t x, uint16_t y) {
@@ -132,11 +136,15 @@ bool report(uint8_t flags, uint16_t x, uint16_t y) {
     uint8_t r[7] = {flags, 0, (uint8_t)x, (uint8_t)(x >> 8), (uint8_t)y, (uint8_t)(y >> 8), 1};
     return HID.SendReport(REPORT_ID, r, sizeof r);
   }
-  uint8_t r[5] = {flags, (uint8_t)x, (uint8_t)(x >> 8), (uint8_t)y, (uint8_t)(y >> 8)};
-  return HID.SendReport(REPORT_ID, r, sizeof r);
+  uint8_t r[6] = {flags, (uint8_t)x, (uint8_t)(x >> 8), (uint8_t)y, (uint8_t)(y >> 8), 0};
+  return HID.SendReport(REPORT_ID, r, variant == 4 ? 6 : 5);
 }
 
-uint16_t scale(float f) { return (uint16_t)(f * FULL); }
+void wheel(float fx, float fy, int8_t lines) {
+  uint8_t r[6] = {0, (uint8_t)scale(fx), (uint8_t)(scale(fx) >> 8), (uint8_t)scale(fy), (uint8_t)(scale(fy) >> 8), (uint8_t)lines};
+  HID.SendReport(REPORT_ID, r, sizeof r);
+}
+
 uint8_t down() { return VARIANTS[variant - 1].down; }
 
 void tap(float fx, float fy, uint32_t hold = HOLD_MS) {
@@ -182,6 +190,10 @@ bool sequence() {
     if (!wait(POINT_GAP_MS)) return false;
   }
   swipe(0.5, 0.7, 0.3, 300, 15);
+  if (variant == 4) {
+    if (!wait(POINT_GAP_MS)) return false;
+    wheel(0.5, 0.5, -3);
+  }
   return wait(LOOP_GAP_MS);
 }
 
@@ -200,7 +212,7 @@ void restartInto(int v) {
 
 void status() {
   Console.printf("variant %d (%s), pure %d, armed %d, passes %d, usb %s\n", variant, VARIANTS[variant - 1].name,
-                mouse == nullptr, prefs.getBool("armed", false), prefs.getInt("passes", 0), hostUp() ? "mounted" : "off");
+                prefs.getInt("pure", 0), prefs.getBool("armed", false), prefs.getInt("passes", 0), hostUp() ? "mounted" : "off");
 }
 
 void serialCommands() {
@@ -212,7 +224,7 @@ void serialCommands() {
     int v = line.substring(2).toInt();
     if (v >= 1 && v <= VARIANT_COUNT) { disarm("variant change"); restartInto(v); }
   } else if (line.startsWith("pure ")) {
-    prefs.putBool("pure", line.substring(5).toInt() != 0);
+    prefs.putInt("pure", line.substring(5).toInt());
     disarm("mode change");
     restartInto(variant);
   } else if (line.startsWith("arm")) {
@@ -233,7 +245,12 @@ void setup() {
   prefs.begin("abstouch");
   variant = constrain(prefs.getInt("variant", 1), 1, VARIANT_COUNT);
   Console.begin(115200);
-  if (!prefs.getBool("pure", false)) mouse = new USBHIDMouse();
+  int pure = prefs.getInt("pure", 0);  // 0: as hid_bridge (mouse, keyboard, consumer); 2: no relative mouse; 1: nothing else
+  if (pure == 0) mouse = new USBHIDMouse();
+  if (pure != 1) {
+    new USBHIDKeyboard();
+    new USBHIDConsumerControl();
+  }
   if (!HID.addDevice(&digitizer, VARIANTS[variant - 1].len)) Console.println("addDevice failed");
   HID.begin();
   USB.productName("Abs Touch Spike");
