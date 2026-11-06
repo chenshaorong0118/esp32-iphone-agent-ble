@@ -5,6 +5,7 @@
 //   1 single-touch screen   2 multi-touch screen (Windows style)   3 pen   4 absolute mouse (control)
 //
 // Serial (USB CDC, only useful on the Mac):  status | v <1-4> (restart into a variant, idle) | arm [passes]
+//   arm [passes] [first variant]: `arm 1 4` runs only the absolute mouse.
 //   pure 1|0 (restart without / with the relative mouse: the mouse comes first in the report map, and a host may
 //   then treat the whole device as a mouse and ignore the digitizer; pure mode has no control, so run it after a
 //   normal pass has shown that USB works)
@@ -32,6 +33,7 @@ const uint32_t PASS_PAUSE_MS = 90000;  // between passes: time to switch Assisti
 const int LOOPS = 2;                   // sequence repeats per variant
 const uint32_t POINT_GAP_MS = 2000;
 const uint32_t HOLD_MS = 80;
+const uint32_t SETTLE_MS = 60;
 const uint32_t LOOP_GAP_MS = 10000;
 
 #define XY_ABS(max_lo, max_hi)                                          \
@@ -138,12 +140,16 @@ uint16_t scale(float f) { return (uint16_t)(f * FULL); }
 uint8_t down() { return VARIANTS[variant - 1].down; }
 
 void tap(float fx, float fy, uint32_t hold = HOLD_MS) {
+  report(0, scale(fx), scale(fy));  // iOS drops X/Y from a report that changes a button: move first, then press
+  delay(SETTLE_MS);
   report(down(), scale(fx), scale(fy));
   delay(hold);
   report(0, scale(fx), scale(fy));
 }
 
 void swipe(float fx, float fy0, float fy1, uint32_t ms, int steps) {
+  report(0, scale(fx), scale(fy0));
+  delay(SETTLE_MS);
   for (int i = 0; i <= steps; i++) {
     report(down(), scale(fx), scale(fy0 + (fy1 - fy0) * i / steps));
     delay(ms / steps);
@@ -210,9 +216,10 @@ void serialCommands() {
     disarm("mode change");
     restartInto(variant);
   } else if (line.startsWith("arm")) {
-    int passes = line.length() > 4 ? line.substring(4).toInt() : 1;
+    int passes = 1, first = 1;
+    sscanf(line.c_str(), "arm %d %d", &passes, &first);
     prefs.putInt("passes", passes < 1 ? 1 : passes);
-    prefs.putInt("variant", 1);
+    prefs.putInt("variant", constrain(first, 1, VARIANT_COUNT));
     prefs.putBool("waiting", true);  // start after the cable moves to the phone
     prefs.putBool("armed", true);
     Console.println("armed: unplug and plug into the phone");

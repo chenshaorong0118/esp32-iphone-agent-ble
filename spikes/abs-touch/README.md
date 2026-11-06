@@ -32,5 +32,17 @@ has no control, so run it after a normal pass has shown that USB works.
 
 ## Results
 
+iPhone 17 Pro, iOS 27, USB, pure mode:
+
+| Variant | AssistiveTouch on | AssistiveTouch off |
+|---|---|---|
+| Touch screen, multi-touch, pen | nothing | nothing |
+| Absolute mouse | works, delivered as `touch` | nothing |
+
+X/Y in a report that changes a button is ignored, so a tap is a move, a 60 ms wait, a press and a release. Done that
+way, ten taps over two loops all landed within 0.001 of the target (screen fractions). Tested inside Safari only.
+
+## Reading the log
+
 `events.jsonl` holds one line per event: `pointerType` says whether iOS treats the input as a finger, a pen or a mouse.
 Positions are fractions of the page, which is smaller than the screen in Safari, so check relative positions only.
