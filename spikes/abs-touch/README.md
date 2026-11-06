@@ -39,6 +39,8 @@ iPhone 17 Pro, iOS 27, USB, pure mode:
 | Touch screen, multi-touch, pen | nothing | nothing |
 | Absolute mouse | works, delivered as `touch` | nothing |
 
+The AssistiveTouch off column is unconfirmed: nothing logged that AssistiveTouch was really off during that pass.
+
 X/Y in a report that changes a button is ignored, so a tap is a move, a 60 ms wait, a press and a release. Done that
 way, ten taps over two loops all landed within 0.001 of the target (screen fractions). Tested inside Safari only.
 
