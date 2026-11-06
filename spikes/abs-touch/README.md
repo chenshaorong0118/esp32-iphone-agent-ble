@@ -27,6 +27,9 @@ a relative wiggle, N quick taps at the top (N = variant number, to tell rounds a
 appears. Any USB disconnect during a run disarms the board, and it disarms when the passes are done. Keep the test
 page in front: if a variant works, its taps go to whatever is on screen.
 
+Send `pure 1` before `arm` to drop the relative mouse, so the tested collection is alone in the report map. Pure mode
+has no control, so run it after a normal pass has shown that USB works.
+
 ## Results
 
 `events.jsonl` holds one line per event: `pointerType` says whether iOS treats the input as a finger, a pen or a mouse.

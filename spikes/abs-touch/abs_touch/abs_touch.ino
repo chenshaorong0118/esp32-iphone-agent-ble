@@ -5,6 +5,12 @@
 //   1 single-touch screen   2 multi-touch screen (Windows style)   3 pen   4 absolute mouse (control)
 //
 // Serial (USB CDC, only useful on the Mac):  status | v <1-4> (restart into a variant, idle) | arm [passes]
+//   pure 1|0 (restart without / with the relative mouse: the mouse comes first in the report map, and a host may
+//   then treat the whole device as a mouse and ignore the digitizer; pure mode has no control, so run it after a
+//   normal pass has shown that USB works)
+//
+// Build with CDCOnBoot off (build.sh): with it on, the core calls USB.begin() before setup(), HID registration is
+// then closed, and addDevice() silently drops everything added in setup(). The device must be added first.
 //
 // Safety: these reports click at absolute positions, so the sequence never runs on the Mac by accident. `arm`
 // waits for the USB cable to be moved: it starts only after the host goes away and a new host appears. Any USB
@@ -33,6 +39,8 @@ const uint32_t LOOP_GAP_MS = 10000;
   0x09, 0x30, 0x09, 0x31, /* Usage (X), Usage (Y) */                    \
   0x15, 0x00,             /* Logical Minimum (0) */                     \
   0x26, max_lo, max_hi,   /* Logical Maximum (32767) */                 \
+  0x35, 0x00,             /* Physical Minimum (0) */                    \
+  0x46, max_lo, max_hi,   /* Physical Maximum (32767) */                \
   0x75, 0x10, 0x95, 0x02, /* Report Size (16), Count (2) */             \
   0x81, 0x02              /* Input (Data, Var, Abs) */
 
@@ -95,7 +103,8 @@ const Variant VARIANTS[] = {
 const int VARIANT_COUNT = 4;
 
 USBHID HID;
-USBHIDMouse Mouse;  // the relative mouse stays in every variant: if it moves and the variant does not, USB works
+USBCDC Console;
+USBHIDMouse *mouse;  // the control, unless pure: if it moves and the variant does not, USB works
 Preferences prefs;
 int variant = 1;    // 1-based
 
@@ -152,9 +161,9 @@ bool wait(uint32_t ms) {
 }
 
 bool sequence() {
-  Mouse.move(50, 0);  // control: the AssistiveTouch pointer wiggles if USB HID works at all
+  if (mouse) mouse->move(50, 0);  // control: the AssistiveTouch pointer wiggles if USB HID works at all
   if (!wait(1500)) return false;
-  Mouse.move(-50, 0);
+  if (mouse) mouse->move(-50, 0);
   if (!wait(1000)) return false;
   for (int i = 0; i < variant; i++) {  // the variant number as quick taps at the top, to tell rounds apart in the log
     tap(0.5, 0.12, 60);
@@ -173,37 +182,41 @@ bool sequence() {
 void disarm(const char *why) {
   prefs.putInt("passes", 0);
   prefs.putBool("armed", false);
-  Serial.printf("disarmed: %s\n", why);
+  Console.printf("disarmed: %s\n", why);
 }
 
 void restartInto(int v) {
   prefs.putInt("variant", v);
-  Serial.flush();
+  Console.flush();
   delay(100);
   ESP.restart();
 }
 
 void status() {
-  Serial.printf("variant %d (%s), armed %d, passes %d, usb %s\n", variant, VARIANTS[variant - 1].name,
-                prefs.getBool("armed", false), prefs.getInt("passes", 0), hostUp() ? "mounted" : "off");
+  Console.printf("variant %d (%s), pure %d, armed %d, passes %d, usb %s\n", variant, VARIANTS[variant - 1].name,
+                mouse == nullptr, prefs.getBool("armed", false), prefs.getInt("passes", 0), hostUp() ? "mounted" : "off");
 }
 
 void serialCommands() {
-  if (!Serial.available()) return;
-  String line = Serial.readStringUntil('\n');
+  if (!Console.available()) return;
+  String line = Console.readStringUntil('\n');
   line.trim();
   if (line == "status") status();
   else if (line.startsWith("v ")) {
     int v = line.substring(2).toInt();
     if (v >= 1 && v <= VARIANT_COUNT) { disarm("variant change"); restartInto(v); }
+  } else if (line.startsWith("pure ")) {
+    prefs.putBool("pure", line.substring(5).toInt() != 0);
+    disarm("mode change");
+    restartInto(variant);
   } else if (line.startsWith("arm")) {
     int passes = line.length() > 4 ? line.substring(4).toInt() : 1;
     prefs.putInt("passes", passes < 1 ? 1 : passes);
     prefs.putInt("variant", 1);
     prefs.putBool("waiting", true);  // start after the cable moves to the phone
     prefs.putBool("armed", true);
-    Serial.println("armed: unplug and plug into the phone");
-    Serial.flush();
+    Console.println("armed: unplug and plug into the phone");
+    Console.flush();
     delay(100);
     ESP.restart();
   }
@@ -212,9 +225,10 @@ void serialCommands() {
 void setup() {
   prefs.begin("abstouch");
   variant = constrain(prefs.getInt("variant", 1), 1, VARIANT_COUNT);
-  Serial.begin(115200);
-  HID.addDevice(&digitizer, VARIANTS[variant - 1].len);
-  Mouse.begin();
+  Console.begin(115200);
+  if (!prefs.getBool("pure", false)) mouse = new USBHIDMouse();
+  if (!HID.addDevice(&digitizer, VARIANTS[variant - 1].len)) Console.println("addDevice failed");
+  HID.begin();
   USB.productName("Abs Touch Spike");
   USB.begin();
 }
