@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Abs Touch Probe</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; touch-action: none; background: #101214; color: #e8e8e8;
+    font: 13px -apple-system, sans-serif; user-select: none; -webkit-user-select: none; }
+  #pad { position: fixed; inset: 0; touch-action: none; }
+  #log { position: fixed; left: 8px; right: 8px; bottom: 8px; max-height: 38%; overflow: hidden; pointer-events: none;
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px; line-height: 1.4; }
+  #head { position: fixed; left: 8px; right: 8px; top: 8px; pointer-events: none; }
+  .dot { position: fixed; width: 18px; height: 18px; margin: -9px; border-radius: 50%; pointer-events: none; }
+  .touch { background: #35c46a; } .pen { background: #3b9dff; } .mouse { background: #ffb020; } .other { background: #e0506a; }
+</style>
+</head>
+<body>
+<div id="pad"></div>
+<div id="head">Abs Touch Probe: <span id="count">0</span> events · green touch, blue pen, orange mouse</div>
+<div id="log"></div>
+<script>
+// Records what iOS delivers and sends it to probe_server.py, so results can be read on the Mac.
+const log = document.getElementById('log'), count = document.getElementById('count'), lines = [];
+let n = 0;
+function send(entry) {
+  fetch('/log', { method: 'POST', body: JSON.stringify(entry), keepalive: true }).catch(() => {});
+}
+function record(kind, type, x, y) {
+  const w = innerWidth, h = innerHeight, fx = +(x / w).toFixed(3), fy = +(y / h).toFixed(3);
+  send({ kind, type, fx, fy, t: Date.now(), w, h });
+  if (!kind.endsWith('move')) {
+    const d = document.createElement('div');
+    d.className = 'dot ' + (['touch', 'pen', 'mouse'].includes(type) ? type : 'other');
+    d.style.left = x + 'px'; d.style.top = y + 'px';
+    document.body.appendChild(d);
+    lines.unshift(`${new Date().toLocaleTimeString()} ${kind} ${type} ${fx},${fy}`);
+    log.textContent = ''; lines.slice(0, 14).forEach(l => log.appendChild(Object.assign(document.createElement('div'), { textContent: l })));
+  }
+  count.textContent = ++n;
+}
+const pad = document.getElementById('pad');
+for (const k of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'])
+  pad.addEventListener(k, e => { e.preventDefault(); record(k, e.pointerType, e.clientX, e.clientY); });
+pad.addEventListener('touchstart', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) record('touchstart', t.touchType || 'touch', t.clientX, t.clientY);
+}, { passive: false });
+document.addEventListener('contextmenu', e => e.preventDefault());
+setInterval(() => send({ kind: 'alive', visible: document.visibilityState, t: Date.now(), w: innerWidth, h: innerHeight }), 5000);
+send({ kind: 'loaded', ua: navigator.userAgent, t: Date.now(), w: innerWidth, h: innerHeight });
+</script>
+</body>
+</html>
